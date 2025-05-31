@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QPushButton, QListWidget,
     QInputDialog, QLineEdit, QMessageBox, QListWidgetItem, QHBoxLayout, QLabel, QMenu,
     QDialog, QDialogButtonBox, QVBoxLayout, QLineEdit, QFormLayout,
-    QFileDialog
+    QFileDialog, QCheckBox, QTextEdit
 )
 from PySide6.QtCore import Qt, QRunnable, QThreadPool, Signal, QObject
 from PySide6.QtGui import QIcon, QFontMetrics, QPixmap
@@ -94,7 +94,7 @@ def load_vault(key):
 
 # ----- Диалог добавления/редактирования записи -----
 class AddEditDialog(QDialog):
-        def __init__(self, name='', username='', password=''):
+        def __init__(self, name='', username='', password='', favorite=False, note=''):
             super().__init__()
             self.setWindowTitle("Добавить запись")
             self.setMinimumWidth(300)
@@ -114,6 +114,15 @@ class AddEditDialog(QDialog):
             self.toggle_btn.setFixedWidth(32)
             self.toggle_btn.clicked.connect(self.toggle_password)
             pass_layout.addWidget(self.toggle_btn)
+
+            # --- Избранное ---
+            self.favorite_checkbox = QCheckBox("⭐Избранное")
+            self.favorite_checkbox.setChecked(favorite)
+            # --- Заметка ---
+            self.note_edit = QTextEdit(note)
+            self.note_edit.setPlaceholderText("Заметка...")
+            layout.addWidget(QLabel("Заметека:"))
+            layout.addWidget(self.note_edit)
             # --- Поля ввода ---
             layout.addWidget(QLabel("Название сервиса:"))
             layout.addWidget(self.name_edit)
@@ -149,7 +158,9 @@ class AddEditDialog(QDialog):
                 return {
                     "name": self.name_edit.text(),
                     "username": self.username_edit.text(),
-                    "password": self.password_edit.text()
+                    "password": self.password_edit.text(),
+                    "favorite": self.favorite_checkbox.isChecked(),
+                    "note": self.note_edit.toPlainText()
                 }
         def toggle_password(self):
             if self.toggle_btn.isChecked():
@@ -198,6 +209,8 @@ class MainWindow(QWidget):
         self.export_button = QPushButton("Экспорт")
         self.import_button = QPushButton("Импорт")
         self.about_button = QPushButton("О программе")
+        self.lock_button = QPushButton("🔒 Блокировать")
+        
 
 
         buttons_layout = QHBoxLayout()
@@ -205,17 +218,41 @@ class MainWindow(QWidget):
         buttons_layout.addWidget(self.export_button)
         buttons_layout.addWidget(self.import_button)
         buttons_layout.addWidget(self.about_button)
+        buttons_layout.addWidget(self.lock_button)
         self.layout.addLayout(buttons_layout)
 
         self.add_button.clicked.connect(self.add_entry)
         self.export_button.clicked.connect(self.export_csv)
         self.import_button.clicked.connect(self.import_csv)
         self.about_button.clicked.connect(self.show_about)
+        self.lock_button.clicked.connect(self.lock_app)
 
         self.setLayout(self.layout)
         self.refresh_list()
 
-                
+    # ----- Блокировка/разблокировка -----
+    def lock_app(self):
+        self.hide()
+        salt = get_or_create_salt()
+        while True:
+            pw, ok = QInputDialog.getText(None, "Разблокировка", "Введите мастер-пароль:", QLineEdit.Password)
+            if not ok:
+                QApplication.quit()
+                return
+            key = derive_key(pw, salt)
+            try:
+                vault_exists = os.path.exists(VAULT_FILE)
+                data = load_vault(key)
+                if vault_exists and not data["accounts"]:
+                    raise InvalidToken()
+                self.key = key
+                break
+            except InvalidToken:
+                QMessageBox.critical(None, "Ошибка", "Неверный мастер-пароль!")
+    # Показываем окно обратно
+        self.show()
+        self.refresh_list()
+            
     # ----- О программе -----
     def show_about(self):
         QMessageBox.information(
@@ -335,12 +372,16 @@ class MainWindow(QWidget):
     def refresh_list(self):
         self.list_widget.clear()
         query = self.search_field.text().lower() if hasattr(self, 'search_field') else ""
-        for idx, acc in enumerate(self.vault["accounts"]):
-            if (
-                query in acc["name"].lower() or
-                query in acc["username"].lower()
-            ):
-                widget = AccountWidget(acc, self, idx)
+        # --- Сортировка по избранному ---
+        accounts_sorted = sorted(
+            self.vault["accounts"],
+            key=lambda acc: acc.get("favorite", False),
+            reverse=True
+        )
+        for acc in accounts_sorted:
+            origin_index = self.vault["accounts"].index(acc)
+            if query in acc["name"].lower() or query in acc["username"].lower():
+                widget = AccountWidget(acc, self, origin_index)
                 item = QListWidgetItem(self.list_widget)
                 item.setSizeHint(widget.sizeHint())
                 self.list_widget.addItem(item)
@@ -363,13 +404,15 @@ class MainWindow(QWidget):
 
     def edit_entry(self, index):
         acc = self.vault["accounts"][index]
-        dialog = AddEditDialog(acc["name"], acc["username"], acc["password"])
+        dialog = AddEditDialog(acc["name"], acc["username"], acc["password"], acc.get("favorite", False), acc.get("note", ""))
         if dialog.exec() == QDialog.Accepted:
             data = dialog.get_data()
             self.vault["accounts"][index] = {
                 "name": data["name"],
                 "username": data["username"],
-                "password": data["password"]
+                "password": data["password"],
+                "favorite": data.get("favorite", False),
+                "note": data.get("note", "")
             }
             save_vault(self.vault, self.key)
             self.refresh_list()
@@ -412,6 +455,12 @@ class AccountWidget(QWidget):
             self.emitter.finished.connect(self.on_favicon_loaded)
             THREADPOOL.start(FaviconLoaderRunnable(self.account, self.index, self.emitter))
 
+        # --- Звезда избранного ---
+        if account.get("favorite", False):
+            star = QLabel("⭐")
+            star.setFixedWidth(22)
+            layout.addWidget(star)
+
         # --- Форматирование текста ---
         full_text = f"{account['name']} ({account['username']})".strip()
         metric = QFontMetrics(self.font())
@@ -420,6 +469,11 @@ class AccountWidget(QWidget):
         label = QLabel(elided_text)
         label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addWidget(label, stretch=1)
+
+         # --- Заметка ---
+        note = account.get("note", "")
+        if note:
+            label.setToolTip(note)
 
         btn = QPushButton("⋮")
         btn.setFixedWidth(40)
@@ -431,6 +485,11 @@ class AccountWidget(QWidget):
         action_copy = menu.addAction("Копировать пароль")
         action_edit = menu.addAction("Редактировать")
         action_delete = menu.addAction("Удалить")
+        # --- Избранное ---
+        if self.account.get("favorite", False):
+            action_favorite = menu.addAction("Удалить из избранного")
+        else:
+            action_favorite = menu.addAction("Добавить в избранное")
 
         def show_menu():
             menu.exec(btn.mapToGlobal(btn.rect().bottomRight()))
@@ -439,7 +498,15 @@ class AccountWidget(QWidget):
         action_copy.triggered.connect(lambda: self.parent.copy_password(self.index))
         action_edit.triggered.connect(lambda: self.parent.edit_entry(self.index))
         action_delete.triggered.connect(lambda: self.parent.delete_entry(self.index))
+        action_favorite.triggered.connect(lambda: self.toggle_favorite())
+    
+    def toggle_favorite(self):
+        self.account["favorite"] = not self.account.get("favorite", False)
+        self.parent.vault["accounts"][self.index]["favorite"] = self.account["favorite"]
+        save_vault(self.parent.vault, self.parent.key)
+        self.parent.refresh_list()
 
+        
     def on_favicon_loaded(self,pixmap, index):
         if index == self.index and not pixmap.isNull():
             name = self.account.get("name", "").lower()
@@ -471,18 +538,29 @@ def main():
     
     # Ввод мастер-пароля
     salt = get_or_create_salt()
-    pw, ok = QInputDialog.getText(None, "Мастер-пароль", "Введите мастер-пароль:", QLineEdit.Password)
-    if not ok or not pw:
-        sys.exit()
-    key = derive_key(pw, salt)
+    vault_exists = os.path.exists(VAULT_FILE)
     
+    while True:
+        pw, ok = QInputDialog.getText(None, "Мастер-пароль", "Введите мастер-пароль:", QLineEdit.Password)
+        if not ok:
+            sys.exit()
+        key = derive_key(pw, salt)
+        try:
+            data = load_vault(key)
+            if vault_exists and not data["accounts"]:
+                raise InvalidToken()
+            break
+        except InvalidToken:
+            QMessageBox.critical(None, "Ошибка", "Неверный мастер-пароль.")
     try:
         window = MainWindow(key)
         window.show()
         app.exec()
     except InvalidToken:
-        QMessageBox.critical(None, "Ошибка", "Неверный мастер-пароль или поврежден файл базы.")
+        QMessageBox.critical(None, "Ошибка", "Неверный мастер-пароль.")
         sys.exit()
+
+   
 
 if __name__ == "__main__":
     main()
