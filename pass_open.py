@@ -1,4 +1,4 @@
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 
 import sys
@@ -7,14 +7,16 @@ import os
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QPushButton, QListWidget,
     QInputDialog, QLineEdit, QMessageBox, QListWidgetItem, QHBoxLayout, QLabel, QMenu,
-    QDialog, QDialogButtonBox, QVBoxLayout, QLineEdit, QFormLayout
+    QDialog, QDialogButtonBox, QVBoxLayout, QLineEdit, QFormLayout,
+    QFileDialog
 )
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QIcon, QFontMetrics
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 from cryptography.hazmat.backends import default_backend
 from cryptography.fernet import Fernet, InvalidToken
 import base64
+import csv
 
 # ----- Криптоутилиты -----
 def derive_key(password: str, salt: bytes) -> bytes:
@@ -147,14 +149,94 @@ class MainWindow(QWidget):
         self.layout.addLayout(search_layout)
 
         self.list_widget = QListWidget()
-        self.add_button = QPushButton("Добавить запись")
-        self.add_button.clicked.connect(self.add_entry)
-
+        self.list_widget.setMinimumHeight(200)
         self.layout.addWidget(self.list_widget)
-        self.layout.addWidget(self.add_button)
-        self.setLayout(self.layout)
+        self.add_button = QPushButton("Добавить запись")
+        self.export_button = QPushButton("Экспорт")
+        self.import_button = QPushButton("Импорт")
 
+        buttons_layout = QHBoxLayout()
+        buttons_layout.addWidget(self.add_button)
+        buttons_layout.addWidget(self.export_button)
+        buttons_layout.addWidget(self.import_button)
+        self.layout.addLayout(buttons_layout)
+
+        self.add_button.clicked.connect(self.add_entry)
+        self.export_button.clicked.connect(self.export_csv)
+        self.import_button.clicked.connect(self.import_csv)
+
+        self.setLayout(self.layout)
         self.refresh_list()
+
+    # ----- Экспорт в CSV -----
+    def export_csv(self):
+        path, _ = QFileDialog.getSaveFileName(self, "Экспорт в CSV", "", "CSV файлы (*.csv)")
+        if not path:
+            return
+        with open(path, "w", newline='', encoding='utf-8') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=["name", "username", "password"])
+            writer.writeheader()
+            for acc in self.vault["accounts"]:
+                writer.writerow({
+                    "name": acc.get("name", ""),
+                    "username": acc.get("username", ""),
+                    "password": acc.get("password", "")
+                })
+        QMessageBox.information(self, "Экспорт", f"Данные успешно экспортированы в CSV")
+
+    # ----- Импорт из CSV -----
+    def import_csv(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Импорт из CSV", "", "CSV файлы (*.csv)")
+        if not path:
+            return
+        imported = 0
+        with open(path, "r", newline='', encoding='utf-8') as csvfile:
+
+            first_line = csvfile.readline()
+            csvfile.seek(0)
+
+            if not any(x in first_line.lower() for x in ["name", "username", "password"]):
+                reader = csv.DictReader(csvfile)
+                for row in reader:
+                    # Яндекс 0 - url 1 - login 2 - password
+                    self.vault["accounts"].append({
+                        "name": row["0"],
+                        "username": row["1"],
+                        "password": row["2"]
+                    })
+                    imported += 1
+            else:
+                reader = csv.DictReader(csvfile)
+                for row in reader:
+                    username = row.get("username") or row.get("login") or ""
+                    name = row.get("name") or row.get("url") or ""
+                    password = row.get("password") or row.get("pass") or ""
+                    if name and username and password:
+                        self.vault["accounts"].append({
+                            "name": name,
+                            "username": username,
+                            "password": password
+                        })
+                        imported += 1
+        save_vault(self.vault, self.key)
+        self.refresh_list()
+        self.clean_vault()
+        QMessageBox.information(self, "Импорт", f"Импортировано {imported} записей")
+        
+# --- Чистка базы от пустых строк ---
+    def clean_vault(self):
+        before = len(self.vault["accounts"])
+        self.vault["accounts"] = [
+            acc for acc in self.vault["accounts"]
+            if acc.get("name") or acc.get("username") or acc.get("password")
+        ]
+        after = len(self.vault["accounts"])
+        if after < before:
+            save_vault(self.vault, self.key)
+            self.refresh_list()
+            QMessageBox.information(self, "Очистка", f"Удалено {before - after} пустых записей")
+
+
 
     def add_entry(self):
         dialog = AddEditDialog()
@@ -230,9 +312,14 @@ class AccountWidget(QWidget):
         layout.setContentsMargins(5, 2, 5, 2)
         layout.setAlignment(Qt.AlignVCenter)
 
-
-        label = QLabel(f"{account['name']} ({account['username']})")
-        layout.addWidget(label)
+        # --- Форматирование текста ---
+        full_text = f"{account['name']} ({account['username']})".strip()
+        metric = QFontMetrics(self.font())
+        max_width = 300
+        elided_text = metric.elidedText(full_text, Qt.ElideRight, max_width)
+        label = QLabel(elided_text)
+        label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        layout.addWidget(label, stretch=1)
 
         btn = QPushButton("⋮")
         btn.setFixedWidth(40)
