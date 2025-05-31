@@ -1,4 +1,4 @@
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 
 import sys
@@ -10,14 +10,50 @@ from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QVBoxLayout, QLineEdit, QFormLayout,
     QFileDialog
 )
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QIcon, QFontMetrics
+from PySide6.QtCore import Qt, QRunnable, QThreadPool, Signal, QObject
+from PySide6.QtGui import QIcon, QFontMetrics, QPixmap
+from urllib.request import urlopen
+from service_domain import SERVICE_DOMAIN_MAP
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 from cryptography.hazmat.backends import default_backend
 from cryptography.fernet import Fernet, InvalidToken
 import base64
 import csv
 import qdarkstyle
+
+class FaviconSignalEmitter(QObject):
+    finished = Signal(QPixmap, int)
+
+FAVICON_CACHE = {}
+THREADPOOL = QThreadPool()
+
+    # --- Получение икноки сервиса ---
+def get_favicon_pixmap(account):
+        name = account.get("name", "").lower()
+        for key, domain in SERVICE_DOMAIN_MAP.items():
+            if key in name:
+                try:
+                   favicon_url = f"https://www.google.com/s2/favicons?sz=64&domain={domain}"
+                   data = urlopen(favicon_url, timeout=2).read()
+                   pixmap =QPixmap()
+                   pixmap.loadFromData(data)
+                   pixmap = pixmap.scaled(24, 24, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                   FAVICON_CACHE[domain] = pixmap
+                   return pixmap
+                except Exception:
+                    break
+        return QPixmap() # Пусто
+
+
+class FaviconLoaderRunnable(QRunnable):
+    def __init__(self, account, index, emitter):
+        super().__init__()
+        self.account = account
+        self.index = index
+        self.emitter = emitter
+    def run(self):
+        pixmap = get_favicon_pixmap(self.account)
+        self.emitter.finished.emit(pixmap, self.index)
 
 # ----- Криптоутилиты -----
 def derive_key(password: str, salt: bytes) -> bytes:
@@ -179,6 +215,7 @@ class MainWindow(QWidget):
         self.setLayout(self.layout)
         self.refresh_list()
 
+                
     # ----- О программе -----
     def show_about(self):
         QMessageBox.information(
@@ -345,7 +382,11 @@ class MainWindow(QWidget):
 # ----- Виджет для отображения и редактирования записи -----
 
 class AccountWidget(QWidget):
+
     def __init__(self, account, parent, index):
+
+
+
         super().__init__()
         self.account = account
         self.index = index
@@ -354,6 +395,22 @@ class AccountWidget(QWidget):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(5, 2, 5, 2)
         layout.setAlignment(Qt.AlignVCenter)
+
+        
+        # --- Иконка сервиса ---
+
+
+        self.icon_label = QLabel()
+        self.icon_label.setFixedSize(26, 26)
+        layout.addWidget(self.icon_label)
+        
+        pixmap = get_favicon_pixmap(self.account)
+        if not pixmap.isNull():
+            self.icon_label.setPixmap(pixmap)
+        else:
+            self.emitter = FaviconSignalEmitter()
+            self.emitter.finished.connect(self.on_favicon_loaded)
+            THREADPOOL.start(FaviconLoaderRunnable(self.account, self.index, self.emitter))
 
         # --- Форматирование текста ---
         full_text = f"{account['name']} ({account['username']})".strip()
@@ -382,6 +439,15 @@ class AccountWidget(QWidget):
         action_copy.triggered.connect(lambda: self.parent.copy_password(self.index))
         action_edit.triggered.connect(lambda: self.parent.edit_entry(self.index))
         action_delete.triggered.connect(lambda: self.parent.delete_entry(self.index))
+
+    def on_favicon_loaded(self,pixmap, index):
+        if index == self.index and not pixmap.isNull():
+            name = self.account.get("name", "").lower()
+            for key, domain in SERVICE_DOMAIN_MAP.items():
+                if key in name:
+                    if domain not in FAVICON_CACHE:
+                        FAVICON_CACHE[domain] = pixmap
+            self.icon_label.setPixmap(pixmap)
         
         
 
