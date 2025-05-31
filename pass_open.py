@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QVBoxLayout, QLineEdit, QFormLayout
 )
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QIcon
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 from cryptography.hazmat.backends import default_backend
 from cryptography.fernet import Fernet, InvalidToken
@@ -125,6 +126,7 @@ class AddEditDialog(QDialog):
 class MainWindow(QWidget):
     def __init__(self, key):
         super().__init__()
+        self.setWindowIcon(QIcon("logo.png"))
         self.setWindowTitle("OpenPass — Простой менеджер паролей")
         self.setGeometry(200, 200, 400, 400)
         self.key = key
@@ -251,6 +253,7 @@ def get_or_create_salt():
 
 def main():
     app = QApplication(sys.argv)
+    app.setWindowIcon(QIcon("logo.png"))
     
     # Ввод мастер-пароля
     salt = get_or_create_salt()

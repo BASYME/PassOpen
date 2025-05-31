@@ -1,0 +1,9 @@
+logo.png
+vault.dat
+vault.salt
+*.pyc
+*.pyo
+*.pyd
+*.pyw
+*.pyz
+*.pywz
