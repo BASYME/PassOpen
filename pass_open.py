@@ -1,4 +1,4 @@
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 
 import sys
@@ -133,6 +133,19 @@ class MainWindow(QWidget):
         self.vault = load_vault(self.key)
         
         self.layout = QVBoxLayout()
+        # --- Строка поиска ---
+        search_layout = QHBoxLayout()
+        self.search_icon = QLabel("🔍")
+        self.search_icon.setFixedWidth(24)
+        search_layout.addWidget(self.search_icon)
+
+        self.search_field = QLineEdit()
+        self.search_field.setPlaceholderText("Поиск...")
+        self.search_field.textChanged.connect(self.refresh_list)
+        search_layout.addWidget(self.search_field)
+
+        self.layout.addLayout(search_layout)
+
         self.list_widget = QListWidget()
         self.add_button = QPushButton("Добавить запись")
         self.add_button.clicked.connect(self.add_entry)
@@ -146,11 +159,11 @@ class MainWindow(QWidget):
     def add_entry(self):
         dialog = AddEditDialog()
         if dialog.exec() == QDialog.Accepted:
-            name, username, password = dialog.get_data()
-            if not name or not username or not password:
+            data = dialog.get_data()
+            if not data["name"] or not data["username"] or not data["password"]:
                 QMessageBox.warning(self, "Ошибка", "Все поля должны быть заполнены.")
                 return
-            self.vault["accounts"].append({"name": name, "username": username, "password": password})
+            self.vault["accounts"].append(data)
             save_vault(self.vault, self.key)
             self.refresh_list()
 
@@ -159,12 +172,17 @@ class MainWindow(QWidget):
 
     def refresh_list(self):
         self.list_widget.clear()
+        query = self.search_field.text().lower() if hasattr(self, 'search_field') else ""
         for idx, acc in enumerate(self.vault["accounts"]):
-            widget = AccountWidget(acc, self, idx)
-            item = QListWidgetItem(self.list_widget)
-            item.setSizeHint(widget.sizeHint())
-            self.list_widget.addItem(item)
-            self.list_widget.setItemWidget(item, widget)
+            if (
+                query in acc["name"].lower() or
+                query in acc["username"].lower()
+            ):
+                widget = AccountWidget(acc, self, idx)
+                item = QListWidgetItem(self.list_widget)
+                item.setSizeHint(widget.sizeHint())
+                self.list_widget.addItem(item)
+                self.list_widget.setItemWidget(item, widget)
         
 
 
