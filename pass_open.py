@@ -1,4 +1,4 @@
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 
 import sys
@@ -17,6 +17,7 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.fernet import Fernet, InvalidToken
 import base64
 import csv
+import qdarkstyle
 
 # ----- Криптоутилиты -----
 def derive_key(password: str, salt: bytes) -> bytes:
@@ -127,6 +128,7 @@ class AddEditDialog(QDialog):
 # ----- Главное окно -----
 class MainWindow(QWidget):
     def __init__(self, key):
+        self.is_dark = False # Темная тема
         super().__init__()
         self.setWindowIcon(QIcon("logo.png"))
         self.setWindowTitle("OpenPass — Простой менеджер паролей")
@@ -140,6 +142,11 @@ class MainWindow(QWidget):
         self.search_icon = QLabel("🔍")
         self.search_icon.setFixedWidth(24)
         search_layout.addWidget(self.search_icon)
+        # --- Кнопка смены темы ---
+        self.theme_button = QPushButton("🌙")
+        self.theme_button.setFixedWidth(32)
+        self.theme_button.clicked.connect(self.toggle_theme)
+        search_layout.addWidget(self.theme_button)
 
         self.search_field = QLineEdit()
         self.search_field.setPlaceholderText("Поиск...")
@@ -154,19 +161,55 @@ class MainWindow(QWidget):
         self.add_button = QPushButton("Добавить запись")
         self.export_button = QPushButton("Экспорт")
         self.import_button = QPushButton("Импорт")
+        self.about_button = QPushButton("О программе")
+
 
         buttons_layout = QHBoxLayout()
         buttons_layout.addWidget(self.add_button)
         buttons_layout.addWidget(self.export_button)
         buttons_layout.addWidget(self.import_button)
+        buttons_layout.addWidget(self.about_button)
         self.layout.addLayout(buttons_layout)
 
         self.add_button.clicked.connect(self.add_entry)
         self.export_button.clicked.connect(self.export_csv)
         self.import_button.clicked.connect(self.import_csv)
+        self.about_button.clicked.connect(self.show_about)
 
         self.setLayout(self.layout)
         self.refresh_list()
+
+    # ----- О программе -----
+    def show_about(self):
+        QMessageBox.information(
+            self,
+            "О программе",
+            "OpenPass — Простой менеджер паролей\n\n"
+            f"PassOpen {__version__}\n"
+            "Автор: BASYME\n"
+            "Лицензия: MIT"
+            "GitHub: https://github.com/BASYME/PassOpen\n"
+        )
+        
+        
+    # ----- Смена темы -----
+    def set_dark_theme(self):
+        import qdarkstyle
+        QApplication.instance().setStyleSheet(qdarkstyle.load_stylesheet_pyside6())
+        self.theme_button.setText("☀️")
+        self.is_dark = True
+
+    def set_light_theme(self):
+        QApplication.instance().setStyleSheet("")
+        self.theme_button.setText("🌙")
+        self.is_dark = False
+
+    def toggle_theme(self):
+        if not self.is_dark:
+            self.set_dark_theme()
+        else:
+            self.set_light_theme()
+
 
     # ----- Экспорт в CSV -----
     def export_csv(self):
