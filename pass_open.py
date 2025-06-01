@@ -14,12 +14,14 @@ from PySide6.QtCore import Qt, QRunnable, QThreadPool, Signal, QObject
 from PySide6.QtGui import QIcon, QFontMetrics, QPixmap
 from urllib.request import urlopen
 from service_domain import SERVICE_DOMAIN_MAP
+from password_generator import PasswordGeneratorDialog
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 from cryptography.hazmat.backends import default_backend
 from cryptography.fernet import Fernet, InvalidToken
 import base64
 import csv
 import qdarkstyle
+import webbrowser
 
 class FaviconSignalEmitter(QObject):
     finished = Signal(QPixmap, int)
@@ -94,7 +96,7 @@ def load_vault(key):
 
 # ----- Диалог добавления/редактирования записи -----
 class AddEditDialog(QDialog):
-        def __init__(self, name='', username='', password='', favorite=False, note=''):
+        def __init__(self, name='', username='', password='', favorite=False, note='', tags=None, url=''):
             super().__init__()
             self.setWindowTitle("Добавить запись")
             self.setMinimumWidth(300)
@@ -103,7 +105,11 @@ class AddEditDialog(QDialog):
 
             self.name_edit = QLineEdit(name)
             self.username_edit = QLineEdit(username)
-            
+
+
+
+            pass_layout = QHBoxLayout()
+
             # --- Пароль ---
             pass_layout = QHBoxLayout()
             self.password_edit = QLineEdit(password)
@@ -115,6 +121,10 @@ class AddEditDialog(QDialog):
             self.toggle_btn.clicked.connect(self.toggle_password)
             pass_layout.addWidget(self.toggle_btn)
 
+            # --- URL ---
+            self.url_edit = QLineEdit(url)
+            self.url_edit.setPlaceholderText("URL сервиса")
+
             # --- Избранное ---
             self.favorite_checkbox = QCheckBox("⭐Избранное")
             self.favorite_checkbox.setChecked(favorite)
@@ -123,17 +133,24 @@ class AddEditDialog(QDialog):
             self.note_edit.setPlaceholderText("Заметка...")
             layout.addWidget(QLabel("Заметека:"))
             layout.addWidget(self.note_edit)
+            # --- Тэги ---
+            self.tags_edit = QLineEdit(", ".join(tags) if tags else "")
+            self.tags_edit.setPlaceholderText("Тэги (через запятую)")
             # --- Поля ввода ---
             layout.addWidget(QLabel("Название сервиса:"))
             layout.addWidget(self.name_edit)
             layout.addWidget(QLabel("Имя пользователя:"))
             layout.addWidget(self.username_edit)
+            layout.addWidget(QLabel("URL сервиса:"))
+            layout.addWidget(self.url_edit)
             layout.addWidget(QLabel("Пароль:"))
             layout.addLayout(pass_layout)
+            layout.addWidget(QLabel("Тэги:"))
+            layout.addWidget(self.tags_edit)
 
             # --- Генерация пароля ---
-            btn_generate = QPushButton("Сгенерировать пароль")
-            btn_generate.clicked.connect(self.generate_password)
+            btn_generate = QPushButton("Расширенный генератор")
+            btn_generate.clicked.connect(self.open_password_generator)
             layout.addWidget(btn_generate)
 
             buttons = QHBoxLayout()
@@ -147,6 +164,13 @@ class AddEditDialog(QDialog):
 
             self.setLayout(layout)
 
+        def open_password_generator(self):
+            dialog = PasswordGeneratorDialog(self)
+            if dialog.exec() == QDialog.Accepted:
+                password = dialog.get_password()
+                if password:
+                    self.password_edit.setText(password)
+
         def generate_password(self):
                 import secrets
                 import string
@@ -155,12 +179,16 @@ class AddEditDialog(QDialog):
                 self.password_edit.setText(pdw)
 
         def get_data(self):
+                tags_str = self.tags_edit.text()
+                tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()]
                 return {
                     "name": self.name_edit.text(),
                     "username": self.username_edit.text(),
                     "password": self.password_edit.text(),
                     "favorite": self.favorite_checkbox.isChecked(),
-                    "note": self.note_edit.toPlainText()
+                    "note": self.note_edit.toPlainText(),
+                    "tags": tags,
+                    "url": self.url_edit.text()
                 }
         def toggle_password(self):
             if self.toggle_btn.isChecked():
@@ -184,6 +212,8 @@ class MainWindow(QWidget):
         self.vault = load_vault(self.key)
         
         self.layout = QVBoxLayout()
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.setSpacing(0)
         # --- Строка поиска ---
         search_layout = QHBoxLayout()
         self.search_icon = QLabel("🔍")
@@ -201,11 +231,16 @@ class MainWindow(QWidget):
         search_layout.addWidget(self.search_field)
 
         self.layout.addLayout(search_layout)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.setSpacing(0)
 
         self.list_widget = QListWidget()
         self.list_widget.setMinimumHeight(200)
         self.layout.addWidget(self.list_widget)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.setSpacing(0)
         self.add_button = QPushButton("Добавить запись")
+        self.add_button.setObjectName("add-btn")
         self.export_button = QPushButton("Экспорт")
         self.import_button = QPushButton("Импорт")
         self.about_button = QPushButton("О программе")
@@ -380,7 +415,8 @@ class MainWindow(QWidget):
         )
         for acc in accounts_sorted:
             origin_index = self.vault["accounts"].index(acc)
-            if query in acc["name"].lower() or query in acc["username"].lower():
+            tags = acc.get("tags", [])
+            if query in acc["name"].lower() or query in acc["username"].lower() or any(query in tag.lower() for tag in tags):
                 widget = AccountWidget(acc, self, origin_index)
                 item = QListWidgetItem(self.list_widget)
                 item.setSizeHint(widget.sizeHint())
@@ -404,16 +440,10 @@ class MainWindow(QWidget):
 
     def edit_entry(self, index):
         acc = self.vault["accounts"][index]
-        dialog = AddEditDialog(acc["name"], acc["username"], acc["password"], acc.get("favorite", False), acc.get("note", ""))
+        dialog = AddEditDialog(acc["name"], acc["username"], acc["password"], acc.get("favorite", False), acc.get("note", ""), acc.get("tags", []), acc.get("url", ""))
         if dialog.exec() == QDialog.Accepted:
             data = dialog.get_data()
-            self.vault["accounts"][index] = {
-                "name": data["name"],
-                "username": data["username"],
-                "password": data["password"],
-                "favorite": data.get("favorite", False),
-                "note": data.get("note", "")
-            }
+            self.vault["accounts"][index] = data
             save_vault(self.vault, self.key)
             self.refresh_list()
 
@@ -431,6 +461,7 @@ class AccountWidget(QWidget):
 
 
         super().__init__()
+        self.setObjectName("card")
         self.account = account
         self.index = index
         self.parent = parent
@@ -440,13 +471,25 @@ class AccountWidget(QWidget):
         layout.setAlignment(Qt.AlignVCenter)
 
         
-        # --- Иконка сервиса ---
 
+        # --- Тэги ---
+        tags = account.get("tags", [])
+        if tags:
+            tags_layout = QHBoxLayout()
+            tags_layout.setSpacing(6)
+            tags_layout.setContentsMargins(0, 0, 0, 0)
+            tags_layout.setSpacing(6)
+            for tag in tags:
+                tag_chip = QLabel(tag)
+                tag_chip.setObjectName("chip")
+                tags_layout.addWidget(tag_chip)
+            layout.addLayout(tags_layout)
+            
 
         self.icon_label = QLabel()
         self.icon_label.setFixedSize(26, 26)
         layout.addWidget(self.icon_label)
-        
+         # --- Иконка сервиса ---       
         pixmap = get_favicon_pixmap(self.account)
         if not pixmap.isNull():
             self.icon_label.setPixmap(pixmap)
@@ -469,6 +512,16 @@ class AccountWidget(QWidget):
         label = QLabel(elided_text)
         label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addWidget(label, stretch=1)
+
+        # --- URL ---
+        url = account.get("url", "")
+        if url:
+            open_btn = QPushButton("🔗")
+            open_btn.setToolTip("Открыть сайт")
+            open_btn.setFixedSize(22, 22)
+            open_btn.setStyleSheet("border: none;")
+            open_btn.clicked.connect(lambda _, url=url: webbrowser.open(url))
+            layout.addWidget(open_btn)
 
          # --- Заметка ---
         note = account.get("note", "")
@@ -536,6 +589,9 @@ def main():
     app = QApplication(sys.argv)
     app.setWindowIcon(QIcon("logo.png"))
     
+    # --- Загрузка стилей ---
+    with open("style.qss", "r", encoding="utf-8") as f:
+        app.setStyleSheet(f.read())
     # Ввод мастер-пароля
     salt = get_or_create_salt()
     vault_exists = os.path.exists(VAULT_FILE)

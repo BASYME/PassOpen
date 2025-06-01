@@ -1,0 +1,27 @@
+QWidget#card {
+    background: #23262a;
+    border-radius: 14px;
+    border: 1px solid #313336;
+    margin-bottom: 12px;
+    padding: 10px 16px 10px 10px;
+}
+
+QPushButton#add-btn {
+    background: #27a7ff;
+    color: white;
+    border-radius: 16px;
+    padding: 8px 24px;
+    font-size: 18px;
+    font-weight: 600;
+    min-width: 160px;
+    margin-top: 4px;
+}
+QLabel#chip {
+    background: #e0e0e0;
+    color: #555;
+    padding: 1px 6px;
+    border-radius: 7px;
+    font-size: 10px;
+    margin-right: 4px;
+    min-width: 16px;
+}
